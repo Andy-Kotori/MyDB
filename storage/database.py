@@ -10,6 +10,7 @@ database.py - 核心数据结构实现（优化版）
 
 from typing import Any, Dict, List, Optional, Iterator, Set, Union
 from enum import Enum
+from .index import IndexManager, IndexType
 
 
 class SchemaMode(Enum):
@@ -101,6 +102,7 @@ class Table:
         self._rows: List[Row] = []
         self._next_rid = 1
         self._mode = mode
+        self._index_manager = IndexManager()
     
     # ========== 只读属性（外部可读，不可直接修改） ==========
     
@@ -161,6 +163,10 @@ class Table:
         self._rows.append(row)
         
         assigned_rid = self._next_rid
+
+
+        # 维护索引
+        self._index_manager.on_insert(full_data, assigned_rid)
         self._next_rid += 1
         
         return assigned_rid
@@ -217,6 +223,7 @@ class Table:
     def delete_by_rid(self, rid: int) -> bool:
         """根据 RowID 删除行"""
         for i, row in enumerate(self._rows):
+            self._index_manager.on_delete(row._data, row.rid)
             if row.rid == rid:
                 self._rows.pop(i)
                 return True
@@ -247,8 +254,15 @@ class Table:
             for col in unknown_cols:
                 self._add_column_to_all_rows(col, None)
         
+
+
         # 只更新已存在的列（严格模式下未知列被静默忽略）
         valid_data = {k: v for k, v in new_data.items() if k in self._columns}
+
+        # 维护索引
+        old_data = row._data.copy()
+        self._index_manager.on_update(old_data, valid_data, rid)
+
         row.update(valid_data)
         return True
     
@@ -293,6 +307,7 @@ class Table:
         if column not in self._columns:
             return False
         
+        self._index_manager.drop_index(column)
         self._columns.remove(column)
         for row in self._rows:
             row.delete_column(column)
